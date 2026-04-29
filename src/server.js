@@ -1,5 +1,6 @@
 const express = require("express");
 const http = require("http");
+const crypto = require("crypto");
 const cors = require("cors");
 const { Server } = require("socket.io");
 
@@ -29,22 +30,110 @@ const io = new Server(server, {
   },
 });
 
+const rooms = new Map();
+
+function createRoomId() {
+  return crypto.randomBytes(3).toString("hex").toUpperCase();
+}
+
+function hashPassword(password) {
+  return crypto.createHash("sha256").update(password).digest("hex");
+}
+
+function createUniqueRoomId() {
+  let roomId = createRoomId();
+
+  while (rooms.has(roomId)) {
+    roomId = createRoomId();
+  }
+
+  return roomId;
+}
+
+function getPublicRoom(roomId) {
+  const room = rooms.get(roomId);
+
+  if (!room) {
+    return null;
+  }
+
+  return {
+    roomId,
+    ownerId: room.ownerId,
+    players: Array.from(room.players.values()),
+  };
+}
+
 io.on("connection", (socket) => {
   socket.emit("server:ready", {
     socketId: socket.id,
   });
 
-  socket.on("room:join", (roomId, ack) => {
-    if (!roomId) {
-      if (typeof ack === "function") ack({ ok: false, error: "roomId is required" });
+  socket.on("room:create", ({ password, playerName } = {}, ack) => {
+    if (!password || String(password).trim().length < 4) {
+      if (typeof ack === "function") {
+        ack({ ok: false, error: "Password must be at least 4 characters" });
+      }
       return;
     }
 
+    const roomId = createUniqueRoomId();
+    const player = {
+      socketId: socket.id,
+      name: playerName || "Host",
+      host: true,
+    };
+
+    rooms.set(roomId, {
+      ownerId: socket.id,
+      passwordHash: hashPassword(String(password)),
+      players: new Map([[socket.id, player]]),
+    });
+
     socket.join(roomId);
-    socket.to(roomId).emit("player:joined", { socketId: socket.id });
 
     if (typeof ack === "function") {
-      ack({ ok: true, roomId });
+      ack({ ok: true, room: getPublicRoom(roomId) });
+    }
+  });
+
+  socket.on("room:join", ({ roomId, password, playerName } = {}, ack) => {
+    if (!roomId || !password) {
+      if (typeof ack === "function") {
+        ack({ ok: false, error: "roomId and password are required" });
+      }
+      return;
+    }
+
+    const normalizedRoomId = String(roomId).trim().toUpperCase();
+    const room = rooms.get(normalizedRoomId);
+
+    if (!room) {
+      if (typeof ack === "function") {
+        ack({ ok: false, error: "Room not found" });
+      }
+      return;
+    }
+
+    if (room.passwordHash !== hashPassword(String(password))) {
+      if (typeof ack === "function") {
+        ack({ ok: false, error: "Incorrect room password" });
+      }
+      return;
+    }
+
+    const player = {
+      socketId: socket.id,
+      name: playerName || "Player",
+      host: room.ownerId === socket.id,
+    };
+
+    room.players.set(socket.id, player);
+    socket.join(normalizedRoomId);
+    socket.to(normalizedRoomId).emit("player:joined", { player });
+
+    if (typeof ack === "function") {
+      ack({ ok: true, room: getPublicRoom(normalizedRoomId) });
     }
   });
 
@@ -56,7 +145,17 @@ io.on("connection", (socket) => {
       return;
     }
 
-    socket.to(roomId).emit("game:event", {
+    const normalizedRoomId = String(roomId).trim().toUpperCase();
+    const room = rooms.get(normalizedRoomId);
+
+    if (!room || !room.players.has(socket.id)) {
+      if (typeof ack === "function") {
+        ack({ ok: false, error: "Join the room before sending game events" });
+      }
+      return;
+    }
+
+    socket.to(normalizedRoomId).emit("game:event", {
       event,
       payload,
       from: socket.id,
@@ -69,8 +168,15 @@ io.on("connection", (socket) => {
 
   socket.on("disconnecting", () => {
     for (const roomId of socket.rooms) {
-      if (roomId !== socket.id) {
+      const room = rooms.get(roomId);
+
+      if (room) {
+        room.players.delete(socket.id);
         socket.to(roomId).emit("player:left", { socketId: socket.id });
+
+        if (room.players.size === 0) {
+          rooms.delete(roomId);
+        }
       }
     }
   });

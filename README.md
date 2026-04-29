@@ -67,6 +67,38 @@ If this repository is deployed in both places, a practical setup is:
 
 You can split frontend/backend into separate services later for a cleaner architecture.
 
+## Socket.IO room flow
+
+Create a room from the host client:
+
+```js
+socket.emit("room:create", { password: "1234", playerName: "Host" }, (res) => {
+  console.log(res.room.roomId);
+});
+```
+
+Share the returned `roomId` with other players. They can join with:
+
+```js
+socket.emit("room:join", {
+  roomId: "ABC123",
+  password: "1234",
+  playerName: "Player 2",
+}, (res) => {
+  console.log(res);
+});
+```
+
+After joining, send gameplay events to everyone else in the room:
+
+```js
+socket.emit("game:event", {
+  roomId: "ABC123",
+  event: "player:hit",
+  payload: { seat: 1 },
+});
+```
+
 ## 7) Optional: deploy with `render.yaml`
 
 This repository includes a Render Blueprint file (`render.yaml`) that preconfigures a **Web Service** for the Socket.IO process.
