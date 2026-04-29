@@ -1,0 +1,19 @@
+{
+  "name": "blackjack-socket",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Socket.IO server for Blackjack realtime gameplay.",
+  "main": "src/server.js",
+  "scripts": {
+    "build": "node --check src/server.js",
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.3",
+    "socket.io": "^4.7.5"
+  }
+}
